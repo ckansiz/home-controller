@@ -1,8 +1,9 @@
 #include <SPI.h>
 #include <Ethernet.h>
-#include <dht11.h> // dht11 kütüphanesini ekliyoruz.
+#include <dht11.h>
+#include <ArduinoJson.h>
 
-#define DHT11PIN 2 // DHT11PIN olarak Dijital 2'yi belirliyoruz.
+#define DHT11PIN 2
 
 byte mac[] = {
   0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED
@@ -12,70 +13,66 @@ IPAddress ip(192, 168, 0, 250);
 EthernetServer server(80);
 dht11 DHT11;
 
+bool readRequest(EthernetClient& client) {
+  bool currentLineIsBlank = true;
+  while (client.connected()) {
+    if (client.available()) {
+      char c = client.read();
+      Serial.write(c);
+      if (c == '\n' && currentLineIsBlank) {
+        return true;
+      } else if (c == '\n') {
+        currentLineIsBlank = true;
+      } else if (c != '\r') {
+        currentLineIsBlank = false;
+      }
+    }
+  }
+  return false;
+}
+
+JsonObject& getTempInfo(JsonBuffer& jsonBuffer)
+{
+  JsonObject& info = jsonBuffer.createObject();
+  
+  int chk = DHT11.read(DHT11PIN);
+  info["humidity"] =(float)DHT11.humidity; 
+  info["temperature"] = (float)DHT11.temperature;
+  info["fahrenheit"] = (float)DHT11.fahrenheit();
+  info["kelvin"] = (float)DHT11.kelvin();
+
+  return info;
+}
+
+void writeResponse(EthernetClient& client, JsonObject& json) {
+  client.println("HTTP/1.1 200 OK");
+  client.println("Content-Type: application/json");
+  client.println("Connection: close");
+  client.println();
+  
+  json.prettyPrintTo(client);
+}
+
 void setup() {
-
   Serial.begin(9600);
-
   Ethernet.begin(mac, ip);
   server.begin();
   Serial.print("server is at ");
   Serial.println(Ethernet.localIP());
 }
 
-
-void loop() {
-
+void loop() {  
   EthernetClient client = server.available();
   if (client) {
-    
-    Serial.println("new client");
-    boolean currentLineIsBlank = true;
-    while (client.connected()) {
-      if (client.available()) {
-        char c = client.read();
-        Serial.write(c);
-        
-        if (c == '\n' && currentLineIsBlank) {
-
-          String tempInfo = GetTemperatureInfo();
-          
-          Serial.println(tempInfo);
-          client.print(tempInfo);
-          
-          break;
-        }
-        if (c == '\n') {
-          // you're starting a new line
-          currentLineIsBlank = true;
-        }
-        else if (c != '\r') {
-          // you've gotten a character on the current line
-          currentLineIsBlank = false;
-        }
-      }
+    bool success = readRequest(client);
+    if (success) {
+      StaticJsonBuffer<500> jsonBuffer;
+      JsonObject& json = getTempInfo(jsonBuffer);
+      writeResponse(client, json);
     }
-    // give the web browser time to receive the data
     delay(1);
-    // close the connection:
     client.stop();
-    Serial.println("client disconnected");
   }
-}
-
-String GetTemperatureInfo()
-{
-  String info = "";
-  
-  float _humidity = (float)DHT11.humidity;
-  float _temperature = (float)DHT11.temperature;
-  float _fahrenheit = (float)DHT11.fahrenheit();
-  float _kelvin = (float)DHT11.kelvin();
-
-  info += "Nem : %" + String(_humidity);
-  info += "\nSicaklik : " + String(_temperature)+" C";
-  info += "\nFahrenheit : " + String(_fahrenheit)+"F";
-
-  return info;
 }
 
 
